@@ -39,13 +39,16 @@ class ViewSpec(tk.Frame):
 
         master.columnconfigure(0, weight=0)
         master.columnconfigure(2, weight=1)
-        master.rowconfigure(4, weight=1)
+        master.rowconfigure(5, weight=1)
 
 
         self.obsid=np.empty(10)
 
         #Number in list
         self.list_counter = 0
+
+        #Check if list has been successfully loaded
+        self.list_loaded = False
 
 
         # This overrides the command to exit a tkinter window using the red exit button on mac
@@ -58,7 +61,7 @@ class ViewSpec(tk.Frame):
        	self.spec_fig, self.spec_ax = plt.subplots(1, figsize = (10,4))
 
         self.spec_canvas = FigureCanvasTkAgg(self.spec_fig, master=self.master)
-        self.spec_canvas.get_tk_widget().grid(row=4,column=0, columnspan=20, rowspan=19, \
+        self.spec_canvas.get_tk_widget().grid(row=5,column=0, columnspan=20, rowspan=18, \
             sticky=tk.NSEW, pady=(0,50))
 
        	self.spec_fig.canvas.draw()
@@ -108,9 +111,13 @@ class ViewSpec(tk.Frame):
         #Load button for target list
         self.load_list_button = tk.Button(self.master, text = 'Load List', \
           command = self.load_list)
-        self.load_list_button.grid(row=2, column=13,\
-          sticky = 'NW')
+        self.load_list_button.grid(row=2, column=13, sticky = 'NW')
 
+
+        #Save output button
+        self.save_button = tk.Button(self.master, text = 'Save Output', \
+          command = self.save_output)
+        self.save_button.grid(row = 4, column = 13, sticky = 'NW')
 
         #Display object info 
         tk.Label(self.master, text='Object ID: ').grid(row=0, column =0, sticky = 'NE')
@@ -128,6 +135,24 @@ class ViewSpec(tk.Frame):
         tk.Label(self.master, text='DEC: ').grid(row=3, column=0, sticky = 'NE')
         self.display_DEC = tk.Label(self.master, text = '', width = 15, anchor='w')
         self.display_DEC.grid(row=3, column=1, columnspan=2, sticky='NW')
+
+
+        #Entry for feature name
+        self.feature_name = tk.StringVar()
+        self.feature_entry = tk.Entry(self.master, width = 10, \
+          textvariable=self.feature_name)
+        self.feature_entry.grid(row=4, column=0, sticky='NE', pady=(10,0))
+        self.feature_entry.insert(0, 'Feature Name')
+
+
+        #Button for flagging features
+        self.flag_button = tk.Button(self.master, text='Flag', width = 10, 
+          command = self.flag_feature)
+        self.flag_button.grid(row = 4, column=1, sticky = 'NW', pady=(10,0))
+
+        #Flag display
+        self.flag_display = tk.Label(self.master, text='')
+        self.flag_display.grid(row=4, column = 2, sticky = 'NW', pady=(10,0))
 
 
        	#Wavelength entry
@@ -185,6 +210,8 @@ class ViewSpec(tk.Frame):
         self.get_columns()
         self.date, self.file_no, self.obsid, self.RA, self.DEC = np.loadtxt(self.target_list_loc_entry.get(), \
           unpack=True, delimiter=',', dtype=str, usecols=self.col_tuple)
+
+        self.file_no = self.file_no.astype(int)
       except IOError:
         tkMessageBox.showwarning(\
           'Warning', 'Could not locate specified target list.')
@@ -194,11 +221,16 @@ class ViewSpec(tk.Frame):
           'Warning', 'Encountered problem loading list.')
         list_load_err = True
 
+
       if list_load_err==False:
         if self.overplot_on.get():
           self.overplot()
+          self.flag_button.config(state='disabled')
         else:
+          self.flag_list = np.zeros(len(self.date))
           self.next_spec()
+          self.flag_button.config(state='normal')
+          self.list_loaded=True
 
 
     def next_spec(self):
@@ -242,15 +274,12 @@ class ViewSpec(tk.Frame):
       print self.obsid[self.list_counter]
 
       H_spec_path = self.wrk_dir_entry.get() + '/' + self.date[self.list_counter] \
-        + '/' + 'SDCH_' + self.date[self.list_counter] + '_' + self.file_no[self.list_counter] \
+        + '/' + 'SDCH_' + self.date[self.list_counter] + '_' + '%04d'%self.file_no[self.list_counter] \
         + '.spec_a0v.fits'
 
       K_spec_path = self.wrk_dir_entry.get() + '/' + self.date[self.list_counter] \
-        + '/' + 'SDCK_' + self.date[self.list_counter] + '_' + self.file_no[self.list_counter] \
+        + '/' + 'SDCK_' + self.date[self.list_counter] + '_' + '%04d'%self.file_no[self.list_counter] \
         + '.spec_a0v.fits'
-
-      #print H_spec_path
-      #print K_spec_path
 
       load_err = False
       try: 
@@ -303,6 +332,9 @@ class ViewSpec(tk.Frame):
 
         self.spec_fig.canvas.draw()
 
+        self.check_flag()
+
+
 
     def display_info(self):
       self.display_obsid.configure(text=self.obsid[self.list_counter])
@@ -318,13 +350,37 @@ class ViewSpec(tk.Frame):
       self.display_DEC.configure(text='')
 
 
+    def flag_feature(self):
+      if self.list_loaded:
+        if self.flag_list[self.list_counter]==0:
+          self.flag_button.config(text='Unflag')
+          self.flag_display.config(text=u'\u2691')
+          self.flag_list[self.list_counter]=1
+        else:
+          self.flag_button.config(text='Flag')
+          self.flag_display.config(text='')
+          self.flag_list[self.list_counter]=0
+      else:
+        tkMessageBox.showwarning(\
+          'Warning', 'No list loaded.')
+
+
+    def check_flag(self):
+      if self.flag_list[self.list_counter]==1:
+          self.flag_button.config(text='Unflag')
+          self.flag_display.config(text=u'\u2691')
+      else:
+          self.flag_button.config(text='Flag')
+          self.flag_display.config(text='')
+
+
+
     def get_columns(self):
       temp_list = np.loadtxt(self.target_list_loc_entry.get(), unpack=False, delimiter=',', dtype=str)
       col_names = temp_list[0,:]
 
       for i in range(0,len(col_names)):
         col = col_names[i].upper().strip()
-        print col
 
         if col=='CIVIL':
           self.date_col = i
@@ -338,6 +394,22 @@ class ViewSpec(tk.Frame):
           self.DEC_col = i
 
       self.col_tuple = (self.date_col, self.fileno_col, self.obsid_col, self.RA_col, self.DEC_col)
+
+
+    def save_output(self):
+      if self.list_loaded:
+        save_list = np.loadtxt(self.target_list_loc_entry.get(), unpack=False, delimiter=',', dtype=str)
+
+        save_flag_list = np.copy(self.flag_list)
+        save_flag_list = save_flag_list.astype(str)
+        save_flag_list[0]=self.feature_entry.get()
+
+        save_list = np.column_stack((save_list,save_flag_list))
+
+        save_name = self.target_list_loc_entry.get().replace('.csv', '_flagged_ouput.csv')
+
+        np.savetxt(save_name, save_list.astype(str), delimiter=',', fmt='%s')
+
 
 
     def _quit(self):
