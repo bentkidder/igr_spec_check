@@ -1,6 +1,6 @@
 #Default files for spec_check.py
-default_working_directory = 'outdata'
-default_target_list = 'HLtau_sample_list.csv'
+default_working_directory = ''
+default_target_list = 'sample_list.csv'
 
 #Default wavelengths for spec_check.py
 default_low_wvl = 2.119
