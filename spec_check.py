@@ -1,7 +1,7 @@
 import matplotlib
 matplotlib.use('TkAgg')
 
-from spec_check_config import *
+from config_spec_check import *
 
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2TkAgg
@@ -9,6 +9,7 @@ from matplotlib.backend_bases import key_press_handler
 import pyfits as fits
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+import matplotlib.cm as cm
 
 import sys
 import os, fnmatch
@@ -37,24 +38,25 @@ class ViewSpec(tk.Frame):
         #Window Title
         self.master.wm_title('View Window')
 
+        self.grid(row=0, column=0)
         master.columnconfigure(0, weight=0)
         master.columnconfigure(2, weight=1)
         master.rowconfigure(5, weight=1)
-
-
-        self.obsid=np.empty(10)
 
         #Number in list
         self.list_counter = 0
 
         #Check if list has been successfully loaded
         self.list_loaded = False
-
+        self.overplot_loaded = False
 
         # This overrides the command to exit a tkinter window using the red exit button on mac
         # and calls a custon quit command. Without this line, the embedded matplotlib canvas
         # would cause a fatal error in python
         self.master.protocol('WM_DELETE_WINDOW', self._quit)
+
+        #Bind to mouse release to check for 'pan' and 'zoom' activity on toolbar
+        self.master.bind("<ButtonRelease-1>", self.on_click)
         
 
        	#Cretae matplotlib canvas for viewing spectra
@@ -68,9 +70,12 @@ class ViewSpec(tk.Frame):
 
         #Create separate frame for matplotlib toolbar
         self.toolbar_frame = tk.Frame(self.master)
-        self.toolbar_frame.grid(row=23,column=3, columnspan=5, rowspan=2, sticky='NE')
+        self.toolbar_frame.grid(row=23,column=4, columnspan=5, rowspan=2, sticky='NE')
         self.beam_toolbar = my_toolbar(self.spec_canvas, self.toolbar_frame)
         self.beam_toolbar.update()
+
+        self.pan_zoom_label = tk.Label(text = '', width=4, anchor='e')
+        self.pan_zoom_label.grid(row=23, column=3,sticky='SE')
 
        	#Working directory input
        	self.wrk_dir = tk.StringVar()
@@ -161,7 +166,6 @@ class ViewSpec(tk.Frame):
        		textvariable=self.lower_wvl)
        	self.lower_wvl_entry.grid(row=23, column = 0, sticky = 'NW', padx=(80,5))
         self.lower_wvl_entry.insert(0, str(default_low_wvl))
-
        	tk.Label(self.master, text='Lower').grid(row=24, column=0, sticky = 'NE', padx=(0,35))
 
 
@@ -171,7 +175,6 @@ class ViewSpec(tk.Frame):
        	self.upper_wvl_entry.grid(row = 23, column = 1, sticky = 'NW')
         self.upper_wvl_entry.insert(0, str(default_high_wvl))
        	tk.Label(self.master, text='Upper').grid(row=24, column=1, sticky = 'NW')
-
        	tk.Label(self.master, text = u'Wavelength Range (\u03bcm)').grid(row=22, column=0, \
        		columnspan=2, sticky = 'NW', padx=(80,0))
 
@@ -185,31 +188,35 @@ class ViewSpec(tk.Frame):
           command = self.prev_spec)
         self.back_button.grid(row=23, column = 12, sticky = 'NE')
 
-
+    #Allows user to browse for igrins 'outdata' directory 
     def browse_wrk_dir(self):
     	select_wrk_dir = askdirectory()
     	self.wrk_dir_entry.delete(0, 'end')
     	self.wrk_dir_entry.insert(0, select_wrk_dir)
 
-
+    #Allows user to locate target list in .csv format
     def browse_target_list(self):
     	select_target_list = askopenfilename()
     	self.target_list_loc_entry.delete(0, 'end')
     	self.target_list_loc_entry.insert(0, select_target_list)
 
 
+    #Reads in target list
     def load_list(self):
+      #Initialzie plot y-axis limits
       self.ymin = np.inf
       self.ymax = -np.inf
 
+      #This variable determines where the user is in the list
       self.list_counter = 0
 
+      #Attempt to load list. Contains separate warnings for problems load
       list_load_err = False
-
       try:
         self.get_columns()
-        self.date, self.file_no, self.obsid, self.RA, self.DEC = np.loadtxt(self.target_list_loc_entry.get(), \
-          unpack=True, delimiter=',', dtype=str, usecols=self.col_tuple)
+        self.date, self.file_no, self.obsid, self.RA, self.DEC = \
+          np.loadtxt(self.target_list_loc_entry.get(), unpack=True, \
+          delimiter=',', dtype=str, usecols=self.col_tuple)
 
         self.file_no = self.file_no.astype(int)
       except IOError:
@@ -222,17 +229,26 @@ class ViewSpec(tk.Frame):
         list_load_err = True
 
 
+      #Proceed with plotting if there are no loading errors.
       if list_load_err==False:
+        self.list_len = len(self.date)
         if self.overplot_on.get():
-          self.overplot()
           self.flag_button.config(state='disabled')
+          self.next_button.config(state='disabled')
+          self.back_button.config(state='disabled')
+          self.overplot_loaded=True
+          self.overplot()
         else:
           self.flag_list = np.zeros(len(self.date))
           self.next_spec()
           self.flag_button.config(state='normal')
+          self.next_button.config(state='normal')
+          self.back_button.config(state='normal')
           self.list_loaded=True
+          self.overplot_loaded=False
 
 
+    #Command to move on to next item in list
     def next_spec(self):
       self.list_counter+=1
 
@@ -241,12 +257,12 @@ class ViewSpec(tk.Frame):
           'Warning', 'Reached end of list.')
         self.list_counter-=1
       else:
-        self.spec_ax.cla()
         self.spec_fig.canvas.draw()
         self.load_spec()
         self.display_info()
+        self.check_flag()
 
-
+    #Command to move to previous item in the list
     def prev_spec(self):
       self.list_counter-=1
 
@@ -255,32 +271,22 @@ class ViewSpec(tk.Frame):
             'Warning', 'Reached start of list.')
         self.list_counter+=1
       else:
-        self.spec_ax.cla()
         self.spec_fig.canvas.draw()
         self.load_spec()
         self.display_info()
-
-
-    def overplot(self):
-      self.clear_info()
-      self.spec_ax.cla()
-      self.list_counter =1
-      while self.list_counter<len(self.date):
-        self.load_spec()
-        self.list_counter+=1
+        self.check_flag()
       
 
+    #Function for loading one spectrum at a time
     def load_spec(self):
-      print self.obsid[self.list_counter]
-
       H_spec_path = self.wrk_dir_entry.get() + '/' + self.date[self.list_counter] \
         + '/' + 'SDCH_' + self.date[self.list_counter] + '_' + '%04d'%self.file_no[self.list_counter] \
         + '.spec_a0v.fits'
-
       K_spec_path = self.wrk_dir_entry.get() + '/' + self.date[self.list_counter] \
         + '/' + 'SDCK_' + self.date[self.list_counter] + '_' + '%04d'%self.file_no[self.list_counter] \
         + '.spec_a0v.fits'
 
+      #Attempt to load .spec_a0v.fits reduced spectrum
       load_err = False
       try: 
         H_hdu = fits.open(H_spec_path)
@@ -296,44 +302,128 @@ class ViewSpec(tk.Frame):
         print 'Load spec error'
         load_err = True
 
-
+      #Proceed if there are no errors loading file
       if load_err == False:
-      
-        self.current_spec = np.append(np.ravel(H_spec), np.ravel(K_spec))  
-        self.current_wvl = np.append(np.ravel(H_wvl), np.ravel(K_wvl)) 
+        
+        #Determine normilization and min/max values for specified wavelength regime
+        ravel_spec = np.append(np.ravel(H_spec), np.ravel(K_spec))  
+        ravel_wvl = np.append(np.ravel(H_wvl), np.ravel(K_wvl)) 
 
-        range_look = self.current_spec[np.where((self.current_wvl>=float(self.lower_wvl_entry.get())) \
-          & (self.current_wvl<=float(self.upper_wvl_entry.get())))]
+        wvl_range_cut = ravel_spec[np.where((ravel_wvl>=float(self.lower_wvl_entry.get())) \
+          & (ravel_wvl<=float(self.upper_wvl_entry.get())))]
 
+        norm_factor = np.nanmedian(wvl_range_cut)
 
-        div_factor = np.nanmedian(range_look)
+        ravel_spec/=np.nanmedian(wvl_range_cut)
+        wvl_range_cut/=np.nanmedian(wvl_range_cut)
 
-        self.current_spec/=np.nanmedian(range_look)
-        range_look/=np.nanmedian(range_look)
-
-        if self.overplot_on.get():
-          if np.nanmin(range_look)<self.ymin:
-            self.ymin = np.nanmin(range_look)
-
-          if np.nanmax(range_look)>self.ymax:
-            self.ymax = np.nanmax(range_look)
-
-        else:
-          self.ymin = np.nanmin(range_look)
-          self.ymax = np.nanmax(range_look)
+        self.ymin = np.nanmin(wvl_range_cut)
+        self.ymax = np.nanmax(wvl_range_cut)
 
         
+        #Plot spectrum
+        self.spec_ax.cla()
         for i in range(0,K_wvl.shape[0]):
-          self.spec_ax.plot(K_wvl[i,100:1950], K_spec[i,100:1950]/div_factor)
+          self.spec_ax.plot(K_wvl[i,100:1950], K_spec[i,100:1950]/norm_factor, \
+            color = default_plot_color)
 
+        for i in range(0,H_wvl.shape[0]):
+          self.spec_ax.plot(H_wvl[i,250:1950], H_spec[i,250:1950]/norm_factor, \
+            color = default_plot_color)
 
+        #Set plot limits
         self.spec_ax.set_xlim(float(self.lower_wvl_entry.get()), float(self.upper_wvl_entry.get()))
         self.spec_ax.set_ylim(self.ymin, self.ymax)
 
+        #Update embedded plot
         self.spec_fig.canvas.draw()
 
-        self.check_flag()
 
+
+    def overplot(self):
+      self.clear_info()
+      self.spec_ax.cla()
+
+      cmap_inc = 0.9/(self.list_len-2)
+      use_cmap = cm.get_cmap(default_overplot_cmap)
+
+      self.ymin = np.inf
+      self.ymax = -np.inf
+      for i in range(1,self.list_len):
+
+        #Get paths for H and K spectrum files
+        H_spec_path = self.wrk_dir_entry.get() + '/' + self.date[i] \
+          + '/' + 'SDCH_' + self.date[i] + '_' + '%04d'%self.file_no[i] \
+          + '.spec_a0v.fits'
+        K_spec_path = self.wrk_dir_entry.get() + '/' + self.date[i] \
+          + '/' + 'SDCK_' + self.date[i] + '_' + '%04d'%self.file_no[i] \
+          + '.spec_a0v.fits'
+
+        #Attempt to load .spec_a0v.fits reduced spectrum
+        load_err = False
+        try: 
+          H_hdu = fits.open(H_spec_path)
+          K_hdu = fits.open(K_spec_path)
+
+          H_spec = H_hdu[0].data
+          K_spec = K_hdu[0].data
+
+          H_wvl = H_hdu[1].data
+          K_wvl = K_hdu[1].data
+
+        except IOError:
+          print 'Load spec error'
+          load_err = True
+
+        #Proceed if there are no errors loading file
+        if load_err == False:
+          #Determine normilization and min/max values for specified wavelength regime
+          ravel_spec = np.append(np.ravel(H_spec), np.ravel(K_spec))  
+          ravel_wvl = np.append(np.ravel(H_wvl), np.ravel(K_wvl)) 
+
+          wvl_range_cut = ravel_spec[np.where((ravel_wvl>=float(self.lower_wvl_entry.get())) \
+            & (ravel_wvl<=float(self.upper_wvl_entry.get())))]
+
+          norm_factor = np.nanmedian(wvl_range_cut)
+
+          ravel_spec/=np.nanmedian(wvl_range_cut)
+          wvl_range_cut/=np.nanmedian(wvl_range_cut)
+
+
+          if np.nanmax(wvl_range_cut)>self.ymax:
+            self.ymax = np.nanmax(wvl_range_cut)
+          if np.nanmin(wvl_range_cut)<self.ymin:
+            self.ymin = np.nanmin(wvl_range_cut)
+
+
+          current_color = use_cmap(cmap_inc*(i-1), 1.)
+
+          #Determine label to use for plot legend
+          if legend_id == 'date':
+            current_label = self.date[i]
+          elif legend_id == 'obsid':
+            current_label = self.obsid[i]
+          elif legend_id == 'nolegend':
+            current_label = None
+
+          #Plot spectrum
+          for j in range(0,K_wvl.shape[0]):
+            self.spec_ax.plot(K_wvl[j,100:1950], K_spec[j,100:1950]/norm_factor, \
+              color = current_color, label = current_label)
+            current_label = None
+
+          for j in range(0,H_wvl.shape[0]):
+            self.spec_ax.plot(H_wvl[j,250:1950], H_spec[j,250:1950]/norm_factor, \
+              color = current_color)
+
+          #Set plot limits
+          self.spec_ax.set_xlim(float(self.lower_wvl_entry.get()), float(self.upper_wvl_entry.get()))
+          self.spec_ax.set_ylim(self.ymin, self.ymax)
+
+          #Update figure legend
+          self.spec_ax.legend()
+          #Update embedded plot
+          self.spec_fig.canvas.draw()
 
 
     def display_info(self):
@@ -397,7 +487,11 @@ class ViewSpec(tk.Frame):
 
 
     def save_output(self):
-      if self.list_loaded:
+      if self.overplot_loaded==True:
+        tkMessageBox.showwarning('Warning', 'Flagging spectra disabled in overplotting mode.')
+      elif not self.list_loaded:
+        tkMessageBox.showwarning('Warning', 'No list loaded.')
+      else:
         save_list = np.loadtxt(self.target_list_loc_entry.get(), unpack=False, delimiter=',', dtype=str)
 
         save_flag_list = np.copy(self.flag_list)
@@ -410,6 +504,16 @@ class ViewSpec(tk.Frame):
 
         np.savetxt(save_name, save_list.astype(str), delimiter=',', fmt='%s')
 
+        tkMessageBox.showinfo('Save Info', 'Output saved successfully.')
+
+
+    def on_click(self, event):
+      if self.spec_fig.canvas.toolbar._active=='ZOOM':
+        self.pan_zoom_label.config(text='Zoom')
+      elif self.spec_fig.canvas.toolbar._active=='PAN':
+        self.pan_zoom_label.config(text='Pan')
+      else:
+        self.pan_zoom_label.config(text='')
 
 
     def _quit(self):
@@ -424,5 +528,4 @@ if __name__ == '__main__':
   root.attributes('-topmost',True)
   root.after_idle(root.attributes,'-topmost',False)
   main = ViewSpec(root)
-  main.grid(row=0,column=0)
   root.mainloop()
