@@ -17,9 +17,9 @@ Running spec_check
 -------------------
 This code is run out of the directory. Simply download the project and cd into the igr_spec_check directory. If all necessary python packages are installed you should be able to simply run 
 
-'''bash
+
     python spec_check.py
-'''
+
 
 from this directory and the speck_check GUI should pop up. If the GUI does not appear at all, it likely means that a necessary package is not installed or up to date. 
 
