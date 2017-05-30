@@ -7,10 +7,10 @@ This code has only been tested in python 2.7. All requirements come standard wit
 
 This code requires the following python packages:
 
--matplotlib
--numpy
--**pyfits**
--tkinter
+- matplotlib
+- numpy
+- **pyfits**
+- tkinter
 
 
 Running spec_check
