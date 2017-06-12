@@ -1,4 +1,4 @@
-import matplotlib
+import matplotlib, sys
 matplotlib.use('TkAgg')
 
 from config_spec_check import *
@@ -30,7 +30,7 @@ class my_toolbar(NavigationToolbar2TkAgg):
     def set_message(self, msg):
         pass
 
-
+#This class contains
 class ViewSpec(tk.Frame):
     def __init__(self, master):
         tk.Frame.__init__(self, master)
@@ -40,7 +40,7 @@ class ViewSpec(tk.Frame):
 
         self.grid(row=0, column=0)
         master.columnconfigure(0, weight=0)
-        master.columnconfigure(2, weight=1)
+        master.columnconfigure(4, weight=1)
         master.rowconfigure(5, weight=1)
 
         #Number in list
@@ -55,8 +55,26 @@ class ViewSpec(tk.Frame):
         # would cause a fatal error in python
         self.master.protocol('WM_DELETE_WINDOW', self._quit)
 
+        #Add a custom menu bar. (Just testing this right now)
+        menubar = tk.Menu(self.master)
+        self.master.config(menu=menubar)
+        filemenu = tk.Menu(menubar)
+        filemenu.add_command(label="Exit", command=self._quit)
+        menubar.add_cascade(label="File", menu=filemenu)
+
+
         #Bind to mouse release to check for 'pan' and 'zoom' activity on toolbar
         self.master.bind("<ButtonRelease-1>", self.on_click)
+
+        #Bind enter key to update wavelength range and y-axis
+        self.master.bind('<Return>', self.update_wvl)
+
+        #Use 'F' key as a shortcut for flagging features
+        self.master.bind('<f>', self.f_press)
+
+        #Bindings for using left and right arrows for cycling through spectra
+        self.master.bind('<Left>', self.left_press)
+        self.master.bind('<Right>', self.right_press)
         
 
        	#Cretae matplotlib canvas for viewing spectra
@@ -70,12 +88,12 @@ class ViewSpec(tk.Frame):
 
         #Create separate frame for matplotlib toolbar
         self.toolbar_frame = tk.Frame(self.master)
-        self.toolbar_frame.grid(row=23,column=4, columnspan=5, rowspan=2, sticky='NE')
+        self.toolbar_frame.grid(row=23,column=5, columnspan=7, rowspan=2, sticky='NE')
         self.beam_toolbar = my_toolbar(self.spec_canvas, self.toolbar_frame)
         self.beam_toolbar.update()
 
         self.pan_zoom_label = tk.Label(text = '', width=4, anchor='e')
-        self.pan_zoom_label.grid(row=23, column=3,sticky='SE')
+        self.pan_zoom_label.grid(row=22, column=5,sticky='SE', padx=(25,0))
 
        	#Working directory input
        	self.wrk_dir = tk.StringVar()
@@ -159,24 +177,40 @@ class ViewSpec(tk.Frame):
         self.flag_display = tk.Label(self.master, text='')
         self.flag_display.grid(row=4, column = 2, sticky = 'NW', pady=(10,0))
 
-
        	#Wavelength entry
        	self.lower_wvl = tk.StringVar()
-       	self.lower_wvl_entry = tk.Entry(self.master, width=7, \
+       	self.lower_wvl_entry = tk.Entry(self.master, width=6, \
        		textvariable=self.lower_wvl)
        	self.lower_wvl_entry.grid(row=23, column = 0, sticky = 'NW', padx=(80,5))
         self.lower_wvl_entry.insert(0, str(default_low_wvl))
-       	tk.Label(self.master, text='Lower').grid(row=24, column=0, sticky = 'NE', padx=(0,35))
-
 
        	self.upper_wvl = tk.StringVar()
-       	self.upper_wvl_entry = tk.Entry(self.master, width = 7, \
+       	self.upper_wvl_entry = tk.Entry(self.master, width = 6, \
        		textvariable= self.upper_wvl)
-       	self.upper_wvl_entry.grid(row = 23, column = 1, sticky = 'NW')
+       	self.upper_wvl_entry.grid(row = 23, column = 1, sticky = 'NW', padx=(20,0))
         self.upper_wvl_entry.insert(0, str(default_high_wvl))
-       	tk.Label(self.master, text='Upper').grid(row=24, column=1, sticky = 'NW')
        	tk.Label(self.master, text = u'Wavelength Range (\u03bcm)').grid(row=22, column=0, \
        		columnspan=2, sticky = 'NW', padx=(80,0))
+        tk.Label(self.master, text='-').grid(row=23, column=1, sticky='NW')
+
+        #Plot range entry
+        self.lower_y = tk.StringVar()
+        self.lower_y_entry = tk.Entry(self.master, width=6, \
+          textvariable=self.lower_y)
+        self.lower_y_entry.grid(row=23, column=2, sticky='NW', padx=(20,0))
+
+        self.upper_y = tk.StringVar()
+        self.upper_y_entry = tk.Entry(self.master, width=6, \
+          textvariable = self.upper_y)
+        self.upper_y_entry.grid(row=23, column=3, sticky = 'NW', padx=(20,0))
+
+        tk.Label(self.master, text='-').grid(row=23, column=3, sticky='NW', padx=(5,0))
+
+        self.set_y_on = tk.IntVar()
+        self.set_y_check = tk.Checkbutton(self.master, text = 'User Y-scale', \
+          variable = self.set_y_on, offvalue = 0, onvalue = 1)
+        self.set_y_check.grid(row = 22, column = 2, columnspan=2, sticky='NW', padx=(40,0))
+
 
        	#Next Spectrum Button 
        	self.next_button = tk.Button(self.master, text = 'Next', \
@@ -200,7 +234,6 @@ class ViewSpec(tk.Frame):
     	self.target_list_loc_entry.delete(0, 'end')
     	self.target_list_loc_entry.insert(0, select_target_list)
 
-
     #Reads in target list
     def load_list(self):
       #Initialzie plot y-axis limits
@@ -210,8 +243,10 @@ class ViewSpec(tk.Frame):
       #This variable determines where the user is in the list
       self.list_counter = 0
 
-      #Attempt to load list. Contains separate warnings for problems load
+      #Attempt to load list. Contains separate warnings for problems 
+      #loading working directory and list
       list_load_err = False
+      wrk_dir_err = False
       try:
         self.get_columns()
         self.date, self.file_no, self.obsid, self.RA, self.DEC = \
@@ -228,9 +263,14 @@ class ViewSpec(tk.Frame):
           'Warning', 'Encountered problem loading list.')
         list_load_err = True
 
+      #Check that working directory exists
+      if os.path.isdir(self.wrk_dir_entry.get())==False:
+        tkMessageBox.showwarning(\
+          'Warning', 'Could not locate specified working directory.')
+        wrk_dir_err = True
 
       #Proceed with plotting if there are no loading errors.
-      if list_load_err==False:
+      if list_load_err==False and wrk_dir_err==False:
         self.list_len = len(self.date)
         if self.overplot_on.get():
           self.flag_button.config(state='disabled')
@@ -247,6 +287,13 @@ class ViewSpec(tk.Frame):
           self.list_loaded=True
           self.overplot_loaded=False
 
+    #Keyboard shortcut for 'Back' button
+    def left_press(self, event):
+      self.prev_spec()
+
+    #Keyboard shortcut for 'Next' button
+    def right_press(self, event):
+      self.next_spec()
 
     #Command to move on to next item in list
     def next_spec(self):
@@ -276,7 +323,6 @@ class ViewSpec(tk.Frame):
         self.display_info()
         self.check_flag()
       
-
     #Function for loading one spectrum at a time
     def load_spec(self):
       H_spec_path = self.wrk_dir_entry.get() + '/' + self.date[self.list_counter] \
@@ -299,15 +345,18 @@ class ViewSpec(tk.Frame):
         K_wvl = K_hdu[1].data
 
       except IOError:
+        self.spec_ax.cla()
+        self.spec_ax.set_title('Spectrum not found')
+        self.spec_fig.canvas.draw()
         print 'Load spec error'
         load_err = True
 
       #Proceed if there are no errors loading file
       if load_err == False:
-        
+        self.spec_ax.set_title('')
         #Determine normilization and min/max values for specified wavelength regime
-        ravel_spec = np.append(np.ravel(H_spec), np.ravel(K_spec))  
-        ravel_wvl = np.append(np.ravel(H_wvl), np.ravel(K_wvl)) 
+        ravel_spec = np.append(np.ravel(H_spec[:,250:1950]), np.ravel(K_spec[:,100:1950]))  
+        ravel_wvl = np.append(np.ravel(H_wvl[:,250:1950]), np.ravel(K_wvl[:,100:1950])) 
 
         wvl_range_cut = ravel_spec[np.where((ravel_wvl>=float(self.lower_wvl_entry.get())) \
           & (ravel_wvl<=float(self.upper_wvl_entry.get())))]
@@ -333,13 +382,18 @@ class ViewSpec(tk.Frame):
 
         #Set plot limits
         self.spec_ax.set_xlim(float(self.lower_wvl_entry.get()), float(self.upper_wvl_entry.get()))
-        self.spec_ax.set_ylim(self.ymin, self.ymax)
+
+        if self.set_y_on.get()==1:
+          self.spec_ax.set_ylim(float(self.lower_y.get()), float(self.upper_y.get()))
+        else:
+          self.spec_ax.set_ylim(self.ymin, self.ymax)
 
         #Update embedded plot
         self.spec_fig.canvas.draw()
 
 
-
+    #This function is similar to loadspec, but overplots all spectra in the list
+    #rather than one at a time. 
     def overplot(self):
       self.clear_info()
       self.spec_ax.cla()
@@ -378,8 +432,8 @@ class ViewSpec(tk.Frame):
         #Proceed if there are no errors loading file
         if load_err == False:
           #Determine normilization and min/max values for specified wavelength regime
-          ravel_spec = np.append(np.ravel(H_spec), np.ravel(K_spec))  
-          ravel_wvl = np.append(np.ravel(H_wvl), np.ravel(K_wvl)) 
+          ravel_spec = np.append(np.ravel(H_spec[:,250:1950]), np.ravel(K_spec[:,100:1950]))  
+          ravel_wvl = np.append(np.ravel(H_wvl[:,250:1950]), np.ravel(K_wvl[:,100:1950])) 
 
           wvl_range_cut = ravel_spec[np.where((ravel_wvl>=float(self.lower_wvl_entry.get())) \
             & (ravel_wvl<=float(self.upper_wvl_entry.get())))]
@@ -425,21 +479,27 @@ class ViewSpec(tk.Frame):
           #Update embedded plot
           self.spec_fig.canvas.draw()
 
-
+    #Function used to alter object info labels for current object
     def display_info(self):
       self.display_obsid.configure(text=self.obsid[self.list_counter])
       self.display_obsdate.configure(text=self.date[self.list_counter])
       self.display_RA.configure(text=self.RA[self.list_counter])
       self.display_DEC.configure(text=self.DEC[self.list_counter])
 
-
+    #function to clear object info labels
     def clear_info(self):
       self.display_obsid.configure(text='')
       self.display_obsdate.configure(text='')
       self.display_RA.configure(text='')
       self.display_DEC.configure(text='')
 
+    #Function that calls the 'flag_feature' function when the 'f'
+    #key is pressed
+    def f_press(self, event):
+      self.flag_feature()
 
+    #Flags or unflags an object when the 'Flag/Unflag' button
+    #is pressed
     def flag_feature(self):
       if self.list_loaded:
         if self.flag_list[self.list_counter]==0:
@@ -454,7 +514,8 @@ class ViewSpec(tk.Frame):
         tkMessageBox.showwarning(\
           'Warning', 'No list loaded.')
 
-
+    #Checks the flag status of an object when the 
+    #'Back' and 'Next' buttons are pressed
     def check_flag(self):
       if self.flag_list[self.list_counter]==1:
           self.flag_button.config(text='Unflag')
@@ -464,7 +525,8 @@ class ViewSpec(tk.Frame):
           self.flag_display.config(text='')
 
 
-
+    #Locates columns based on column titles contained in the 
+    #first row of an input list
     def get_columns(self):
       temp_list = np.loadtxt(self.target_list_loc_entry.get(), unpack=False, delimiter=',', dtype=str)
       col_names = temp_list[0,:]
@@ -485,7 +547,7 @@ class ViewSpec(tk.Frame):
 
       self.col_tuple = (self.date_col, self.fileno_col, self.obsid_col, self.RA_col, self.DEC_col)
 
-
+    #Function for saving the flag data for a given list
     def save_output(self):
       if self.overplot_loaded==True:
         tkMessageBox.showwarning('Warning', 'Flagging spectra disabled in overplotting mode.')
@@ -506,7 +568,21 @@ class ViewSpec(tk.Frame):
 
         tkMessageBox.showinfo('Save Info', 'Output saved successfully.')
 
+    #Update wavelength range and y-axis when Enter key is pressed
+    def update_wvl(self, event):
+      self.spec_ax.set_xlim(float(self.lower_wvl.get()), float(self.upper_wvl.get()))
 
+      if self.set_y_on.get()==1:
+        try:
+          self.spec_ax.set_ylim(float(self.lower_y.get()), float(self.upper_y.get()))
+        except ValueError:
+          tkMessageBox.showwarning(\
+          'Sorry, Greg', 'Invalid y-axis limit entry.')
+          
+      self.spec_fig.canvas.draw()
+
+
+    #Check if pan/zoom are on when mouse is released
     def on_click(self, event):
       if self.spec_fig.canvas.toolbar._active=='ZOOM':
         self.pan_zoom_label.config(text='Zoom')
@@ -515,7 +591,7 @@ class ViewSpec(tk.Frame):
       else:
         self.pan_zoom_label.config(text='')
 
-
+    #Kill program when exit button is pressed
     def _quit(self):
     	self.master.quit()
         self.master.destroy()
