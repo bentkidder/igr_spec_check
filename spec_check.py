@@ -10,6 +10,7 @@ import pyfits as fits
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import matplotlib.cm as cm
+from scipy import stats
 
 import sys
 import os, fnmatch
@@ -20,7 +21,7 @@ if sys.version_info[0] < 3:
 else:
     import tkinter as tk
 
-from tkFileDialog import askdirectory, askopenfilename
+from tkFileDialog import askdirectory, askopenfilename, asksaveasfilename
 
 # Create a new Matplotlib toolbar that does not display live x,y coordinates
 # (this caused the toolbar to move around in its tk grid cell)
@@ -56,11 +57,17 @@ class ViewSpec(tk.Frame):
         self.master.protocol('WM_DELETE_WINDOW', self._quit)
 
         #Add a custom menu bar. (Just testing this right now)
-        menubar = tk.Menu(self.master)
-        self.master.config(menu=menubar)
-        filemenu = tk.Menu(menubar)
-        filemenu.add_command(label="Exit", command=self._quit)
-        menubar.add_cascade(label="File", menu=filemenu)
+        self.menubar = tk.Menu(self.master)
+        self.master.config(menu=self.menubar)
+        self.filemenu = tk.Menu(self.menubar)
+        self.menubar.add_cascade(label="File", menu=self.filemenu)
+
+        self.save_SNR_bool = tk.BooleanVar()
+        self.filemenu.add_checkbutton(label='Save SNR Data', \
+          onvalue=1, offvalue=0, variable=self.save_SNR_bool)
+
+        self.filemenu.add_command(label = 'Save Session', command = self.save_session)
+        self.filemenu.add_command(label = 'Load Session', command = self.load_session)
 
 
         #Bind to mouse release to check for 'pan' and 'zoom' activity on toolbar
@@ -198,11 +205,13 @@ class ViewSpec(tk.Frame):
         self.lower_y_entry = tk.Entry(self.master, width=6, \
           textvariable=self.lower_y)
         self.lower_y_entry.grid(row=23, column=2, sticky='NW', padx=(20,0))
+        self.lower_y_entry.insert(0, default_low_y)
 
         self.upper_y = tk.StringVar()
         self.upper_y_entry = tk.Entry(self.master, width=6, \
           textvariable = self.upper_y)
         self.upper_y_entry.grid(row=23, column=3, sticky = 'NW', padx=(20,0))
+        self.upper_y_entry.insert(0, default_high_y)
 
         tk.Label(self.master, text='-').grid(row=23, column=3, sticky='NW', padx=(5,0))
 
@@ -210,7 +219,6 @@ class ViewSpec(tk.Frame):
         self.set_y_check = tk.Checkbutton(self.master, text = 'User Y-scale', \
           variable = self.set_y_on, offvalue = 0, onvalue = 1)
         self.set_y_check.grid(row = 22, column = 2, columnspan=2, sticky='NW', padx=(40,0))
-
 
        	#Next Spectrum Button 
        	self.next_button = tk.Button(self.master, text = 'Next', \
@@ -280,6 +288,7 @@ class ViewSpec(tk.Frame):
           self.overplot()
         else:
           self.flag_list = np.zeros(len(self.date))
+          self.SNR_list = np.zeros((len(self.date), 6))
           self.next_spec()
           self.flag_button.config(state='normal')
           self.next_button.config(state='normal')
@@ -332,6 +341,13 @@ class ViewSpec(tk.Frame):
         + '/' + 'SDCK_' + self.date[self.list_counter] + '_' + '%04d'%self.file_no[self.list_counter] \
         + '.spec_a0v.fits'
 
+      H_sn_path = self.wrk_dir_entry.get() + '/' + self.date[self.list_counter] \
+        + '/' + 'SDCH_' + self.date[self.list_counter] + '_' + '%04d'%self.file_no[self.list_counter] \
+        + '.sn.fits'
+      K_sn_path = self.wrk_dir_entry.get() + '/' + self.date[self.list_counter] \
+        + '/' + 'SDCK_' + self.date[self.list_counter] + '_' + '%04d'%self.file_no[self.list_counter] \
+        + '.sn.fits'
+
       #Attempt to load .spec_a0v.fits reduced spectrum
       load_err = False
       try: 
@@ -344,12 +360,25 @@ class ViewSpec(tk.Frame):
         H_wvl = H_hdu[1].data
         K_wvl = K_hdu[1].data
 
+        self.flag_button.config(state='normal')
+
       except IOError:
         self.spec_ax.cla()
         self.spec_ax.set_title('Spectrum not found')
         self.spec_fig.canvas.draw()
+        self.flag_list[self.list_counter] = np.nan
+        self.flag_button.config(state = 'disabled')
         print 'Load spec error'
         load_err = True
+
+      #Attempt to load signal to noise files
+      snr_load_err = False
+      try:
+        H_sn = fits.getdata(H_sn_path)
+        K_sn = fits.getdata(K_sn_path)
+      except IOError:
+        print 'Load SNR error'
+        snr_load_err = True
 
       #Proceed if there are no errors loading file
       if load_err == False:
@@ -391,6 +420,36 @@ class ViewSpec(tk.Frame):
         #Update embedded plot
         self.spec_fig.canvas.draw()
 
+        #Get SNR file values (mean, median, mode)
+        if snr_load_err==False:
+          #Averages for H band SNR
+          H_sn = np.sort(H_sn, axis=None)
+
+          H_sn = np.delete(H_sn, np.where(np.isnan(H_sn)==True))
+          H_sn = np.delete(H_sn, np.where(H_sn<0))
+          H_sn = np.around(H_sn[int(0.1*len(H_sn)):-1], decimals=0)
+
+          H_mean = np.around(np.mean(H_sn), decimals=0)
+          H_median = np.median(H_sn)
+          H_mode = stats.mode(H_sn, axis=None)
+
+          #Averages for K band SNR
+          K_sn = np.sort(K_sn, axis=None)
+
+          K_sn = np.delete(K_sn, np.where(np.isnan(K_sn)==True))
+          K_sn = np.delete(K_sn, np.where(K_sn<0))
+          K_sn = np.around(K_sn[int(0.1*len(K_sn)):-1], decimals=0)
+
+          K_mean = np.around(np.mean(K_sn), decimals=0)
+          K_median = np.median(K_sn)
+          K_mode = stats.mode(K_sn, axis=None)
+
+          #Store average data in array
+          #print self.SNR_list.shape
+          #print self.flag_list.shape
+          self.SNR_list[self.list_counter, :] = \
+            np.array([H_mean, K_mean, H_median, K_median, H_mode[0], K_mode[0]])
+
 
     #This function is similar to loadspec, but overplots all spectra in the list
     #rather than one at a time. 
@@ -428,6 +487,7 @@ class ViewSpec(tk.Frame):
         except IOError:
           print 'Load spec error'
           load_err = True
+
 
         #Proceed if there are no errors loading file
         if load_err == False:
@@ -496,7 +556,10 @@ class ViewSpec(tk.Frame):
     #Function that calls the 'flag_feature' function when the 'f'
     #key is pressed
     def f_press(self, event):
-      self.flag_feature()
+      if self.flag_button['state'] == 'normal':
+        self.flag_feature()
+      else:
+        pass
 
     #Flags or unflags an object when the 'Flag/Unflag' button
     #is pressed
@@ -562,6 +625,13 @@ class ViewSpec(tk.Frame):
 
         save_list = np.column_stack((save_list,save_flag_list))
 
+        #Check if user wants to save the SNR data as well as the flag list
+        if self.save_SNR_bool.get()==True:
+          save_SNR_list = np.copy(self.SNR_list).astype(str)
+          save_SNR_list[0, :] = \
+            np.array(['H Mean', 'K Mean', 'H Median', 'K Median', 'H Mode', 'K Mode'])
+          save_list = np.column_stack((save_list, save_SNR_list))
+
         save_name = self.target_list_loc_entry.get().replace('.csv', '_flagged_ouput.csv')
 
         np.savetxt(save_name, save_list.astype(str), delimiter=',', fmt='%s')
@@ -580,6 +650,71 @@ class ViewSpec(tk.Frame):
           'Sorry, Greg', 'Invalid y-axis limit entry.')
           
       self.spec_fig.canvas.draw()
+
+    #Save current session
+    def save_session(self):
+      if self.list_loaded==False:
+        tkMessageBox.showwarning(\
+          'Warning', 'Cannot save session with no target list loaded.')
+        return
+      elif self.overplot_on.get()==True:
+        tkMessageBox.showwarning(\
+          'Warning', 'Cannot save session in overplot mode.')
+        return
+
+      cwd = os.getcwd()
+      save_file = asksaveasfilename(initialdir= (cwd + '/saved_sessions'))
+
+
+      np.savez(save_file + '.npz', date = self.date, file_no = self.file_no, 
+        obsid = self.obsid, RA = self.RA, DEC = self.DEC, flag_list = self.flag_list, \
+        SNR_list = self.SNR_list, list_counter = self.list_counter)
+
+    #Load a previously saved session
+    def load_session(self):
+
+      if self.overplot_on.get()==True:
+        tkMessageBox.showwarning(\
+          'Warning', 'Cannot load sessions in overplot mode.')
+        return
+
+      cwd = os.getcwd()
+      open_session = askopenfilename(initialdir= (cwd + '/saved_sessions'))
+
+      if not os.path.exists(self.wrk_dir.get()):
+        tkMessageBox.showwarning('Warning', \
+          'Working directory not found. Loading a previous session still requires the valid \
+          working directory to be entered in the proper field. Please check that this field has \
+          been correctly filled out.')
+        return
+
+      test_load = np.load(open_session)
+
+      try:
+        load_npz = np.load(open_session)
+
+        self.date = load_npz['date']
+        self.file_no = load_npz['file_no']
+        self.obsid = load_npz['obsid']
+        self.RA = load_npz['RA']
+        self.DEC = load_npz['DEC']
+        self.flag_list = load_npz['flag_list']
+        self.SNR_list = load_npz['SNR_list']
+        self.list_counter = load_npz['list_counter'] - 1
+
+      except IOError:
+        tkMessageBox.showwarning(\
+          'Warning', 'There was a problem loading this session. Please ensure that you selected \
+          the correct directory and that none of the saved .npy files were deleted.')
+        return
+
+      self.next_spec()
+      self.flag_button.config(state='normal')
+      self.next_button.config(state='normal')
+      self.back_button.config(state='normal')
+      self.list_loaded=True
+      self.overplot_loaded=False
+
 
 
     #Check if pan/zoom are on when mouse is released
