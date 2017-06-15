@@ -76,6 +76,9 @@ class ViewSpec(tk.Frame):
         #Bind enter key to update wavelength range and y-axis
         self.master.bind('<Return>', self.update_wvl)
 
+        #Use escape key to remove focus from entry widgets
+        self.master.bind('<Escape>', self.esc_entry)
+
         #Use 'F' key as a shortcut for flagging features
         self.master.bind('<f>', self.f_press)
 
@@ -204,6 +207,7 @@ class ViewSpec(tk.Frame):
         self.lower_y = tk.StringVar()
         self.lower_y_entry = tk.Entry(self.master, width=6, \
           textvariable=self.lower_y)
+        self.lower_y_entry.name = 'Grumpus'
         self.lower_y_entry.grid(row=23, column=2, sticky='NW', padx=(20,0))
         self.lower_y_entry.insert(0, default_low_y)
 
@@ -219,6 +223,10 @@ class ViewSpec(tk.Frame):
         self.set_y_check = tk.Checkbutton(self.master, text = 'User Y-scale', \
           variable = self.set_y_on, offvalue = 0, onvalue = 1)
         self.set_y_check.grid(row = 22, column = 2, columnspan=2, sticky='NW', padx=(40,0))
+
+        #Label for tracking place in list
+        self.list_count_label = tk.Label(text = '/')
+        self.list_count_label.grid(row=22, column = 12, columnspan=2, sticky = 'S', padx=(0,20))
 
        	#Next Spectrum Button 
        	self.next_button = tk.Button(self.master, text = 'Next', \
@@ -545,6 +553,8 @@ class ViewSpec(tk.Frame):
       self.display_obsdate.configure(text=self.date[self.list_counter])
       self.display_RA.configure(text=self.RA[self.list_counter])
       self.display_DEC.configure(text=self.DEC[self.list_counter])
+      self.list_count_label.configure(text = \
+        str(self.list_counter) + '/' + str(len(self.date)-1))
 
     #function to clear object info labels
     def clear_info(self):
@@ -623,6 +633,7 @@ class ViewSpec(tk.Frame):
         save_flag_list = save_flag_list.astype(str)
         save_flag_list[0]=self.feature_entry.get()
 
+        print save_list.shape, save_flag_list.shape
         save_list = np.column_stack((save_list,save_flag_list))
 
         #Check if user wants to save the SNR data as well as the flag list
@@ -640,6 +651,7 @@ class ViewSpec(tk.Frame):
 
     #Update wavelength range and y-axis when Enter key is pressed
     def update_wvl(self, event):
+      self.master.focus()
       self.spec_ax.set_xlim(float(self.lower_wvl.get()), float(self.upper_wvl.get()))
 
       if self.set_y_on.get()==1:
@@ -650,6 +662,10 @@ class ViewSpec(tk.Frame):
           'Sorry, Greg', 'Invalid y-axis limit entry.')
           
       self.spec_fig.canvas.draw()
+
+    #Escape key removes focus from entry widgets
+    def esc_entry(self, event):
+      self.master.focus()
 
     #Save current session
     def save_session(self):
