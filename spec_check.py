@@ -18,8 +18,10 @@ import tkMessageBox
 
 if sys.version_info[0] < 3:
     import Tkinter as tk
+    import ttk
 else:
     import tkinter as tk
+    from tkinter import ttk
 
 from tkFileDialog import askdirectory, askopenfilename, asksaveasfilename
 
@@ -36,6 +38,7 @@ class ViewSpec(tk.Frame):
     def __init__(self, master):
         tk.Frame.__init__(self, master)
 
+
         #Window Title
         self.master.wm_title('View Window')
 
@@ -50,6 +53,7 @@ class ViewSpec(tk.Frame):
         #Check if list has been successfully loaded
         self.list_loaded = False
         self.overplot_loaded = False
+
 
         # This overrides the command to exit a tkinter window using the red exit button on mac
         # and calls a custon quit command. Without this line, the embedded matplotlib canvas
@@ -80,18 +84,25 @@ class ViewSpec(tk.Frame):
         self.master.bind('<Escape>', self.esc_entry)
 
         #Use 'F' key as a shortcut for flagging features
-        self.master.bind('<f>', self.f_press)
+        self.master.bind('<Command-f>', self.f_press)
 
         #Bindings for using left and right arrows for cycling through spectra
         self.master.bind('<Left>', self.left_press)
         self.master.bind('<Right>', self.right_press)
+
+        #Function for saving png images of matplotlib canvas 
+        self.master.bind('<Command-s>', self.save_img_short)
+
+        #Command for focusing on comment box
+        self.master.bind('<Command-w>', self.write_comment)
+
         
 
        	#Cretae matplotlib canvas for viewing spectra
        	self.spec_fig, self.spec_ax = plt.subplots(1, figsize = (10,4))
 
         self.spec_canvas = FigureCanvasTkAgg(self.spec_fig, master=self.master)
-        self.spec_canvas.get_tk_widget().grid(row=5,column=0, columnspan=20, rowspan=18, \
+        self.spec_canvas.get_tk_widget().grid(row=7,column=0, columnspan=20, rowspan=16, \
             sticky=tk.NSEW, pady=(0,50))
 
        	self.spec_fig.canvas.draw()
@@ -150,7 +161,12 @@ class ViewSpec(tk.Frame):
         #Save output button
         self.save_button = tk.Button(self.master, text = 'Save Output', \
           command = self.save_output)
-        self.save_button.grid(row = 4, column = 13, sticky = 'NW')
+        self.save_button.grid(row = 4, column = 13, sticky = 'NW', pady=(10,0))
+
+        #Button for saving images to gallery
+        self.save_img_button = tk.Button(self.master, text = 'Save Image', \
+          command = self.save_img)
+        self.save_img_button.grid(row=5, column = 13, sticky = 'NW')
 
         #Display object info 
         tk.Label(self.master, text='Object ID: ').grid(row=0, column =0, sticky = 'NE')
@@ -177,6 +193,12 @@ class ViewSpec(tk.Frame):
         self.feature_entry.grid(row=4, column=0, sticky='NE', pady=(10,0))
         self.feature_entry.insert(0, 'Feature Name')
 
+        #Entry for comments
+        self.comment = tk.StringVar()
+        self.comment_entry = tk.Entry(self.master, width=23, \
+          textvariable = self.comment)
+        self.comment_entry.grid(row=5, column=0, sticky='NE', columnspan=2)
+
 
         #Button for flagging features
         self.flag_button = tk.Button(self.master, text='Flag', width = 10, 
@@ -200,7 +222,7 @@ class ViewSpec(tk.Frame):
        	self.upper_wvl_entry.grid(row = 23, column = 1, sticky = 'NW', padx=(20,0))
         self.upper_wvl_entry.insert(0, str(default_high_wvl))
        	tk.Label(self.master, text = u'Wavelength Range (\u03bcm)').grid(row=22, column=0, \
-       		columnspan=2, sticky = 'NW', padx=(80,0))
+       		columnspan=2, sticky = 'SW', padx=(80,0))
         tk.Label(self.master, text='-').grid(row=23, column=1, sticky='NW')
 
         #Plot range entry
@@ -222,11 +244,11 @@ class ViewSpec(tk.Frame):
         self.set_y_on = tk.IntVar()
         self.set_y_check = tk.Checkbutton(self.master, text = 'User Y-scale', \
           variable = self.set_y_on, offvalue = 0, onvalue = 1)
-        self.set_y_check.grid(row = 22, column = 2, columnspan=2, sticky='NW', padx=(40,0))
+        self.set_y_check.grid(row = 22, column = 2, columnspan=2, sticky='SW', padx=(40,0))
 
         #Label for tracking place in list
         self.list_count_label = tk.Label(text = '/')
-        self.list_count_label.grid(row=22, column = 12, columnspan=2, sticky = 'S', padx=(0,20))
+        self.list_count_label.grid(row=22, column = 12, columnspan=2, sticky = 'S', padx=(0,30))
 
        	#Next Spectrum Button 
        	self.next_button = tk.Button(self.master, text = 'Next', \
@@ -237,6 +259,7 @@ class ViewSpec(tk.Frame):
         self.back_button = tk.Button(self.master, text = 'Back', \
           command = self.prev_spec)
         self.back_button.grid(row=23, column = 12, sticky = 'NE')
+
 
     #Allows user to browse for igrins 'outdata' directory 
     def browse_wrk_dir(self):
@@ -265,8 +288,9 @@ class ViewSpec(tk.Frame):
       wrk_dir_err = False
       try:
         self.get_columns()
+        self.current_list_name = self.target_list_loc_entry.get()
         self.date, self.file_no, self.obsid, self.RA, self.DEC = \
-          np.loadtxt(self.target_list_loc_entry.get(), unpack=True, \
+          np.loadtxt(self.current_list_name , unpack=True, \
           delimiter=',', dtype=str, usecols=self.col_tuple)
 
         self.file_no = self.file_no.astype(int)
@@ -297,6 +321,8 @@ class ViewSpec(tk.Frame):
         else:
           self.flag_list = np.zeros(len(self.date))
           self.SNR_list = np.zeros((len(self.date), 6))
+          self.comment_list = np.zeros(len(self.date)).astype(str)
+          self.comment_list.fill('')
           self.next_spec()
           self.flag_button.config(state='normal')
           self.next_button.config(state='normal')
@@ -314,20 +340,30 @@ class ViewSpec(tk.Frame):
 
     #Command to move on to next item in list
     def next_spec(self):
+      if (self.list_counter > 0) and (self.list_counter<(len(self.date)-1)):
+        self.comment_list[self.list_counter] = self.comment.get()
+        self.comment_entry.delete(0,'end')
+
       self.list_counter+=1
 
       if self.list_counter==len(self.date):
         tkMessageBox.showwarning(\
           'Warning', 'Reached end of list.')
         self.list_counter-=1
+        self.comment_list[self.list_counter] = self.comment.get()
       else:
         self.spec_fig.canvas.draw()
         self.load_spec()
         self.display_info()
         self.check_flag()
+        self.comment_entry.insert(0, self.comment_list[self.list_counter])
 
     #Command to move to previous item in the list
     def prev_spec(self):
+      if self.list_counter>1:
+        self.comment_list[self.list_counter] = self.comment.get()
+        self.comment_entry.delete(0,'end')
+        
       self.list_counter-=1
 
       if self.list_counter==0:
@@ -339,6 +375,7 @@ class ViewSpec(tk.Frame):
         self.load_spec()
         self.display_info()
         self.check_flag()
+        self.comment_entry.insert(0, self.comment_list[self.list_counter])
       
     #Function for loading one spectrum at a time
     def load_spec(self):
@@ -376,7 +413,7 @@ class ViewSpec(tk.Frame):
         self.spec_fig.canvas.draw()
         self.flag_list[self.list_counter] = np.nan
         self.flag_button.config(state = 'disabled')
-        print 'Load spec error'
+        #print 'Load spec error'
         load_err = True
 
       #Attempt to load signal to noise files
@@ -385,7 +422,7 @@ class ViewSpec(tk.Frame):
         H_sn = fits.getdata(H_sn_path)
         K_sn = fits.getdata(K_sn_path)
       except IOError:
-        print 'Load SNR error'
+        #print 'Load SNR error'
         snr_load_err = True
 
       #Proceed if there are no errors loading file
@@ -406,7 +443,6 @@ class ViewSpec(tk.Frame):
         self.ymin = np.nanmin(wvl_range_cut)
         self.ymax = np.nanmax(wvl_range_cut)
 
-        
         #Plot spectrum
         self.spec_ax.cla()
         for i in range(0,K_wvl.shape[0]):
@@ -439,7 +475,8 @@ class ViewSpec(tk.Frame):
 
           H_mean = np.around(np.mean(H_sn), decimals=0)
           H_median = np.median(H_sn)
-          H_mode = stats.mode(H_sn, axis=None)
+          H_mode = stats.mode(np.around(H_sn, decimals=-1), axis=None)
+          #H_mode = stats.mode(H_sn, axis=None)
 
           #Averages for K band SNR
           K_sn = np.sort(K_sn, axis=None)
@@ -450,7 +487,9 @@ class ViewSpec(tk.Frame):
 
           K_mean = np.around(np.mean(K_sn), decimals=0)
           K_median = np.median(K_sn)
-          K_mode = stats.mode(K_sn, axis=None)
+          K_mode = stats.mode(np.around(K_sn, decimals=-1), axis=None)
+          #K_mode = stats.mode(K_sn, axis=None)
+
 
           #Store average data in array
           #print self.SNR_list.shape
@@ -493,9 +532,8 @@ class ViewSpec(tk.Frame):
           K_wvl = K_hdu[1].data
 
         except IOError:
-          print 'Load spec error'
+          #print 'Load spec error'
           load_err = True
-
 
         #Proceed if there are no errors loading file
         if load_err == False:
@@ -544,6 +582,7 @@ class ViewSpec(tk.Frame):
 
           #Update figure legend
           self.spec_ax.legend()
+
           #Update embedded plot
           self.spec_fig.canvas.draw()
 
@@ -626,15 +665,24 @@ class ViewSpec(tk.Frame):
         tkMessageBox.showwarning('Warning', 'Flagging spectra disabled in overplotting mode.')
       elif not self.list_loaded:
         tkMessageBox.showwarning('Warning', 'No list loaded.')
+      elif self.feature_name.get() == 'Feature Name' or self.feature_name.get() == '':
+        tkMessageBox.showwarning('Warning', 'Enter valid feature name before saving.')
+        self.feature_entry.focus_set()
+
       else:
+        self.comment_list[self.list_counter]=self.comment.get()
         save_list = np.loadtxt(self.target_list_loc_entry.get(), unpack=False, delimiter=',', dtype=str)
 
         save_flag_list = np.copy(self.flag_list)
         save_flag_list = save_flag_list.astype(str)
-        save_flag_list[0]=self.feature_entry.get()
+        save_flag_list[0]=self.feature_name.get()
 
-        print save_list.shape, save_flag_list.shape
+        #print save_list.shape, save_flag_list.shape
         save_list = np.column_stack((save_list,save_flag_list))
+
+        if not all(self.comment_list==''):
+          self.comment_list[0] = self.feature_name.get() + ' Comments'
+          save_list = np.column_stack((save_list, self.comment_list))
 
         #Check if user wants to save the SNR data as well as the flag list
         if self.save_SNR_bool.get()==True:
@@ -643,16 +691,64 @@ class ViewSpec(tk.Frame):
             np.array(['H Mean', 'K Mean', 'H Median', 'K Median', 'H Mode', 'K Mode'])
           save_list = np.column_stack((save_list, save_SNR_list))
 
-        save_name = self.target_list_loc_entry.get().replace('.csv', '_flagged_ouput.csv')
+
+        save_name = self.target_list_loc_entry.get().replace('.csv', '_' + \
+          self.feature_name.get() + '_flagged_ouput.csv')
 
         np.savetxt(save_name, save_list.astype(str), delimiter=',', fmt='%s')
 
         tkMessageBox.showinfo('Save Info', 'Output saved successfully.')
 
+    #Call save_img from keyboard (command+s)
+    def save_img_short(self, event):
+      self.save_img()
+
+    #Function for saving png versions of matplotlib plots
+    def save_img(self):
+      feature = self.feature_entry.get()
+      if feature=='' or feature=='Feature Name':
+        tkMessageBox.showwarning('Warning', \
+          'Please enter a valid feature name before saving an image.')
+        return
+      elif not (self.list_loaded or self.overplot_loaded):
+        tkMessageBox.showwarning('Warning', \
+          'No list loaded.')
+        return
+
+      list_name = self.current_list_name.split('/')[-1]
+      list_name = list_name.replace('.csv', '_')
+
+      if self.overplot_loaded:
+        save_folder = 'img_gallery'
+        save_name = save_folder + '/' + list_name + feature + '_overplot.png'
+        
+        try: 
+          self.spec_fig.savefig(save_name, dpi=120)
+        except IOError:
+          tkMessageBox.showwarning('Warning', 'Save path for images not found.')
+          return
+
+        tkMessageBox.showinfo('Save Info', 'Image saved successfully.')
+
+      elif self.list_loaded:
+        save_folder = 'img_gallery/' + list_name + feature 
+        save_name = str(self.list_counter) + '_' + \
+          self.obsid[self.list_counter] + '_' + self.date[self.list_counter]
+
+        if not os.path.isdir(save_folder):
+          os.makedirs(save_folder)
+
+        self.spec_fig.savefig(save_folder + '/' + save_name )
+        tkMessageBox.showinfo('Save Info', 'Image saved successfully.')
+
+
+
+
     #Update wavelength range and y-axis when Enter key is pressed
     def update_wvl(self, event):
       self.master.focus()
       self.spec_ax.set_xlim(float(self.lower_wvl.get()), float(self.upper_wvl.get()))
+      #print event.widget, self.master.focus_get()
 
       if self.set_y_on.get()==1:
         try:
@@ -678,13 +774,14 @@ class ViewSpec(tk.Frame):
           'Warning', 'Cannot save session in overplot mode.')
         return
 
+      self.comment_list[self.list_counter]=self.comment.get()
+
       cwd = os.getcwd()
       save_file = asksaveasfilename(initialdir= (cwd + '/saved_sessions'))
 
-
       np.savez(save_file + '.npz', date = self.date, file_no = self.file_no, 
         obsid = self.obsid, RA = self.RA, DEC = self.DEC, flag_list = self.flag_list, \
-        SNR_list = self.SNR_list, list_counter = self.list_counter)
+        SNR_list = self.SNR_list, list_counter = self.list_counter, comments = self.comment_list)
 
     #Load a previously saved session
     def load_session(self):
@@ -717,6 +814,7 @@ class ViewSpec(tk.Frame):
         self.flag_list = load_npz['flag_list']
         self.SNR_list = load_npz['SNR_list']
         self.list_counter = load_npz['list_counter'] - 1
+        self.comment_list = load_npz['comments']
 
       except IOError:
         tkMessageBox.showwarning(\
@@ -742,10 +840,14 @@ class ViewSpec(tk.Frame):
       else:
         self.pan_zoom_label.config(text='')
 
+    #Focus on comment widget using keyboard (command+w)
+    def write_comment(self, event):
+      self.comment_entry.focus_set()
+
     #Kill program when exit button is pressed
     def _quit(self):
     	self.master.quit()
-        self.master.destroy()
+      #self.master.destroy()
 
 
 
